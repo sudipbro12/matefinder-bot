@@ -1,6 +1,5 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import os
 
 waiting = []
 chat_pairs = {}
@@ -45,28 +44,12 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("😕 You're not in a chat. Use /start to find someone.")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('Use /start to find a chat partner.')
-Use /stop to leave the chat.")
-
-async def set_commands(application):
-    from telegram import BotCommand
-    await application.bot.set_my_commands([
-        BotCommand("start", "Find a chat partner"),
-        BotCommand("stop", "Leave the current chat"),
-        BotCommand("help", "How to use the bot"),
-    ])
-
 def main():
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token("7620053279:AAGBcPnUOGgw3flX8CrNMbIfEy1Ufku9eXI").build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message))
-
-    app.post_init = set_commands
 
     print("💘 MateFinder Bot is Live!")
     app.run_polling()

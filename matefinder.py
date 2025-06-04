@@ -45,7 +45,7 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("😕 You're not in a chat. Use /start to find someone.")
 
 def main():
-    app = Application.builder().token("7620053279:AAGBcPnUOGgw3flX8CrNMbIfEy1Ufku9eXI").build()
+    app = Application.builder().token("YOUR_BOT_TOKEN").build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))

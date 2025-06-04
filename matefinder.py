@@ -46,7 +46,7 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("😕 You're not in a chat. Use /start to find someone.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Use /start to find a chat partner.')
+    await update.message.reply_text('Use /start to find a chat partner.')
 Use /stop to leave the chat.")
 
 async def set_commands(application):

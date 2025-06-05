@@ -203,6 +203,22 @@ def show_help(message):
         "/broadcast <message> - Send message to all users (admin only)"
     )
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
+# Cancel command
+@bot.message_handler(commands=['cancel'])
+def cancel_all(message):
+    user_id = message.from_user.id
 
+    # Cancel profile creation if in progress
+    if user_id in users:
+        users.pop(user_id)
+
+    # End active chat session if exists
+    if user_id in active_chats:
+        partner_id = active_chats.pop(user_id)
+        if partner_id in active_chats:
+            active_chats.pop(partner_id)
+        bot.send_message(partner_id, "⚠️ The other user has cancelled the chat.")
+
+    bot.send_message(user_id, "❌ All ongoing operations cancelled.\nYou can now use /start or other commands.")
 # Start polling
 bot.infinity_polling()

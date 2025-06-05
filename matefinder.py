@@ -140,16 +140,21 @@ def handle_like_dislike(call):
 
     if call.data.startswith("like_"):
         likes.setdefault(user_id, []).append(target_id)
+
         if user_id in likes.get(target_id, []):
+            bot.send_message(user_id, "🎉 It's a match! Use /chat to start talking.")
+            bot.send_message(target_id, "🎉 It's a match! Use /chat to start talking.")
             active_chats[user_id] = target_id
             active_chats[target_id] = user_id
-            bot.send_message(user_id, "🎉 It's a match! Start chatting with /chat")
-            bot.send_message(target_id, "🎉 It's a match! Start chatting with /chat")
         else:
-            bot.send_message(user_id, "👍 You liked the profile.")
-    else:
-        likes.setdefault(user_id, []).append(target_id)
-        bot.send_message(user_id, "⏩ Skipped.")
+            bot.send_message(user_id, "👍 Liked!")
+
+    elif call.data.startswith("dislike_"):
+        dislikes.setdefault(user_id, []).append(target_id)
+        bot.send_message(user_id, "👎 Skipped.")
+
+    # ✅ Show next profile automatically
+    find_match(call.message)
 
 # Start chat
 @bot.message_handler(commands=['chat'])

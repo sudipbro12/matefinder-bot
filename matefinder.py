@@ -127,12 +127,13 @@ markup.row(
     types.InlineKeyboardButton("❤️ Like", callback_data=f"like_{uid}"),
     types.InlineKeyboardButton("❌ Skip", callback_data=f"dislike_{uid}")
 )
+
 markup.row(
     types.InlineKeyboardButton("➡️ Next", callback_data="next_profile")
 )
-)
-            bot.send_photo(user_id, profile['photo'], caption=caption, reply_markup=markup)
-            return
+
+bot.send_photo(user_id, profile['photo'], caption=caption, reply_markup=markup)
+return
 
     bot.send_message(user_id, "🔍 No more profiles to show right now. Try again later.")
 

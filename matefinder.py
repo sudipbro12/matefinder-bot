@@ -125,7 +125,7 @@ def find_match(message):
             markup = types.InlineKeyboardMarkup()
             markup.row(
                 types.InlineKeyboardButton("❤️ Like", callback_data=f"like_{uid}"),
-                types.InlineKeyboardButton("❌ Skip", callback_data=f"dislike_{uid}")
+                types.InlineKeyboardButton("❌ Skip", callback_data=f"dislike_{uid}"),
                 types.InlineKeyboardButton("➡️ Next", callback_data="next_profile")
             )
             bot.send_photo(user_id, profile['photo'], caption=caption, reply_markup=markup)

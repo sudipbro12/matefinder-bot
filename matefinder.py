@@ -123,10 +123,14 @@ def find_match(message):
         if uid != user_id and uid not in likes.get(user_id, []):
             caption = f"👤 Name: {profile['name']}\n📅 Age: {profile['age']}\n🚻 Gender: {profile['gender']}\n📍 Place: {profile['place']}\n📝 Bio: {profile['bio']}"
             markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton("❤️ Like", callback_data=f"like_{uid}"),
-                types.InlineKeyboardButton("❌ Skip", callback_data=f"dislike_{uid}")
-            )
+markup.row(
+    types.InlineKeyboardButton("❤️ Like", callback_data=f"like_{uid}"),
+    types.InlineKeyboardButton("❌ Skip", callback_data=f"dislike_{uid}")
+)
+markup.row(
+    types.InlineKeyboardButton("➡️ Next", callback_data="next_profile")
+)
+            
             bot.send_photo(user_id, profile['photo'], caption=caption, reply_markup=markup)
             return
 

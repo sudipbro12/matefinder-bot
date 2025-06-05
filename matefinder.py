@@ -111,7 +111,8 @@ def edit_profile(message):
     users[user_id] = {'step': 'name'}
     bot.send_message(user_id, "🛠 Let's update your profile.\nWhat's your name?")
 
-# Find match@bot.message_handler(commands=['find'])
+# Find match
+@bot.message_handler(commands=['find'])
 def find_match(message):
     @bot.callback_query_handler(func=lambda call: call.data == "next_profile")
 def handle_next(call):

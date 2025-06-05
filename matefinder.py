@@ -130,7 +130,7 @@ markup.row(
 markup.row(
     types.InlineKeyboardButton("➡️ Next", callback_data="next_profile")
 )
-            
+)
             bot.send_photo(user_id, profile['photo'], caption=caption, reply_markup=markup)
             return
 

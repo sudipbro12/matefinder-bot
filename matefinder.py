@@ -1,7 +1,9 @@
 import telebot
 from telebot import types
 
-bot = telebot.TeleBot("BOT_TOKEN")
+import os
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
 
 users = {}
 profiles = {}

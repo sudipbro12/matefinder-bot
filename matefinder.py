@@ -120,26 +120,18 @@ def find_match(message):
         return
 
     for uid, profile in profiles.items():
-        if uid != user_id and uid not in likes.get(user_id, []) and uid not in dislikes.get(user_id, []):
-            caption = (
-                f"👤 Name: {profile['name']}\n"
-                f"📅 Age: {profile['age']}\n"
-                f"🚻 Gender: {profile['gender']}\n"
-                f"📍 Place: {profile['place']}\n"
-                f"📝 Bio: {profile['bio']}"
-            )
+        if uid != user_id and uid not in likes.get(user_id, []):
+            caption = f"👤 Name: {profile['name']}\n📅 Age: {profile['age']}\n🚻 Gender: {profile['gender']}\n📍 Place: {profile['place']}\n📝 Bio: {profile['bio']}"
             markup = types.InlineKeyboardMarkup()
-            markup.row(
+            markup.add(
                 types.InlineKeyboardButton("❤️ Like", callback_data=f"like_{uid}"),
                 types.InlineKeyboardButton("❌ Skip", callback_data=f"dislike_{uid}")
-            )
-            markup.row(
-                types.InlineKeyboardButton("➡️ Next", callback_data="next_profile")
             )
             bot.send_photo(user_id, profile['photo'], caption=caption, reply_markup=markup)
             return
 
     bot.send_message(user_id, "🔍 No more profiles to show right now. Try again later.")
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "next_profile")
 def handle_next(call):

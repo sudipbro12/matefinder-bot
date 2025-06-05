@@ -1,7 +1,7 @@
 import telebot
 from telebot import types
 
-bot = telebot.TeleBot("7620053279:AAGUFqqfBZ4v46cg0UABngswb7o3HN8zj2k")
+bot = telebot.TeleBot("bot_token")
 
 users = {}
 profiles = {}

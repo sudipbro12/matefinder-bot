@@ -200,6 +200,7 @@ def show_help(message):
         "/stop - Stop current chat\n"
         "/help - Show all commands\n"
         "/admin - Admin panel\n"
+        "/cancel - Cancel any current operation (profile/chat)\n"
         "/broadcast <message> - Send message to all users (admin only)"
     )
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown")

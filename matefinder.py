@@ -15,15 +15,33 @@ admin_ids = [6535216093]  # Replace with your Telegram user ID
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
+
+    # If user already has profile, show welcome
     if user_id in profiles:
-        bot.send_message(user_id, "👤 You already have a profile. Use /edit to update it.")
+        bot.send_message(user_id, "👋 Welcome back! Use /find to search for matches.")
         return
 
-    users[user_id] = {'step': 'name'}
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔔 Join our channel (optional)", url="https://t.me/MateFinderUpdates"))
-    bot.send_message(user_id, "👋 Welcome to MateFinder!\nLet's create your profile.\nWhat’s your name?", reply_markup=markup)
+    # If user already in process, skip intro
+    if user_id in users:
+        bot.send_message(user_id, "⚠️ You're already creating a profile. Continue with your details.")
+        return
 
+    # New user: show channel join (optional)
+    markup = types.InlineKeyboardMarkup()
+    join_button = types.InlineKeyboardButton(
+        "🔔 Join our channel (optional)", url="https://t.me/MateFinderUpdates"  # replace with your actual channel
+    )
+    markup.add(join_button)
+
+    bot.send_message(
+        user_id,
+        "📢 To stay updated, you can join our channel below (optional):",
+        reply_markup=markup
+    )
+
+    # Start profile setup
+    users[user_id] = {'step': 'name'}
+    bot.send_message(user_id, "👤 Let's create your profile.\nWhat's your name?")
 # Handle profile creation steps (text only)
 @bot.message_handler(func=lambda msg: msg.from_user.id in users and msg.content_type == 'text')
 def handle_profile_steps(message):

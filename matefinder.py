@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot Token
-TOKEN = "7620053279:AAGETQR-9A_KUhAcldUqz41EckEvBRfgpSE"
+TOKEN = "BOT_TOKEN"
 CHANNEL_USERNAME = "@MateFinderUpdates"
 
 # States

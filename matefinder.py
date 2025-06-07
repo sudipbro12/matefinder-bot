@@ -1,249 +1,204 @@
-import telebot
-from telebot import types
+import logging
+import random
+from datetime import datetime
+from tinydb import TinyDB, Query
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, InputMediaPhoto
+)
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ContextTypes, filters, ConversationHandler
+)
 
-import os
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-bot = telebot.TeleBot(BOT_TOKEN)
+# Initialize
+logging.basicConfig(level=logging.INFO)
+db = TinyDB("matefinder_db.json")
+users_table = db.table("users")
+likes_table = db.table("likes")
+skips_table = db.table("skips")
+waiting_table = db.table("waiting")
+muted_table = db.table("muted")
+banned_table = db.table("banned")
+chat_pairs = {}
+random_waiting = []
 
-users = {}
-profiles = {}
-likes = {}
-active_chats = {}
-admin_ids = [6535216093]  # Replace with your Telegram user ID
+# States
+PROFILE_NAME, PROFILE_AGE, PROFILE_GENDER, PROFILE_PHOTO, PROFILE_PLACE, PROFILE_BIO = range(6)
+FINDING, COMMENTING, MATCH_CHAT, RANDOM_CHAT = range(6, 10)
 
-# Start command
-@bot.message_handler(commands=['start'])
-def start(message):
-    user_id = message.from_user.id
+# Utils
+def get_user(user_id):
+    return users_table.get(Query().user_id == user_id)
 
-    # If user already has profile, show welcome
-    if user_id in profiles:
-        bot.send_message(user_id, "👋 Welcome back! Use /find to search for matches.")
+def save_user(data):
+    users_table.upsert(data, Query().user_id == data['user_id'])
+
+def add_like(liker, liked):
+    likes_table.insert({'from': liker, 'to': liked})
+
+def add_skip(skipper, skipped):
+    skips_table.insert({'from': skipper, 'to': skipped})
+
+def get_mutual_likes(user_id):
+    sent = likes_table.search(Query().from_ == user_id)
+    received = likes_table.search(Query().to == user_id)
+    sent_ids = {x['to'] for x in sent}
+    received_ids = {x['from'] for x in received}
+    return list(sent_ids & received_ids)
+
+def is_banned(user_id):
+    return banned_table.contains(Query().user_id == user_id)
+
+# Command: /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if is_banned(user_id):
+        await update.message.reply_text("⛔ You are banned from using this bot.")
         return
+    keyboard = [
+        [InlineKeyboardButton("Join Channel", url="https://t.me/MateFinderUpdatesl")],
+        [InlineKeyboardButton("Skip", callback_data="skip_channel")]
+    ]
+    await update.message.reply_text("Welcome to MateFinder! Join our channel or skip.",
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # If user already in process, skip intro
-    if user_id in users:
-        bot.send_message(user_id, "⚠️ You're already creating a profile. Continue with your details.")
-        return
+async def skip_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("👋 Welcome to MateFinder! Let's create your profile. What's your name?")
+    return PROFILE_NAME
 
-    # New user: show channel join (optional)
-    markup = types.InlineKeyboardMarkup()
-    join_button = types.InlineKeyboardButton(
-        "🔔 Join our channel (optional)", url="https://t.me/MateFinderUpdates"  # replace with your actual channel
-    )
-    markup.add(join_button)
+# Profile Creation Handlers
+async def profile_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("Your age?")
+    return PROFILE_AGE
 
-    bot.send_message(
-        user_id,
-        "📢 To stay updated, you can join our channel below (optional):",
-        reply_markup=markup
-    )
+async def profile_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['age'] = update.message.text
+    await update.message.reply_text("Your gender? (Male/Female/Other)")
+    return PROFILE_GENDER
 
-    # Start profile setup
-    users[user_id] = {'step': 'name'}
-    bot.send_message(user_id, "👤 Let's create your profile.\nWhat's your name?")
-# Handle profile creation steps (text only)
-@bot.message_handler(func=lambda msg: msg.from_user.id in users and msg.content_type == 'text')
-def handle_profile_steps(message):
-    user_id = message.from_user.id
-    step = users[user_id]['step']
-    text = message.text
+async def profile_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['gender'] = update.message.text
+    await update.message.reply_text("Send your profile photo.")
+    return PROFILE_PHOTO
 
-    if step == 'name':
-        users[user_id]['name'] = text
-        users[user_id]['step'] = 'age'
-        bot.send_message(user_id, "📅 Enter your age:")
+async def profile_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['photo'] = update.message.photo[-1].file_id
+    await update.message.reply_text("Optional: Your place (or type /skip)")
+    return PROFILE_PLACE
 
-    elif step == 'age':
-        if not text.isdigit():
-            bot.send_message(user_id, "⚠️ Please enter a valid age.")
-            return
-        users[user_id]['age'] = text
-        users[user_id]['step'] = 'gender'
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add("Male", "Female", "Other")
-        bot.send_message(user_id, "🚻 Select your gender:", reply_markup=markup)
+async def profile_place(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['place'] = update.message.text
+    await update.message.reply_text("Optional: Your bio (or type /skip)")
+    return PROFILE_BIO
 
-    elif step == 'gender':
-        users[user_id]['gender'] = text
-        users[user_id]['step'] = 'place'
-        bot.send_message(user_id, "📍 Where are you from?")
+async def skip_optional(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await save_profile(update, context)
 
-    elif step == 'place':
-        users[user_id]['place'] = text
-        users[user_id]['step'] = 'bio'
-        bot.send_message(user_id, "📝 Write a short bio about yourself:")
+async def profile_bio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['bio'] = update.message.text
+    return await save_profile(update, context)
 
-    elif step == 'bio':
-        users[user_id]['bio'] = text
-        users[user_id]['step'] = 'photo'
-        markup = types.ReplyKeyboardRemove()
-        bot.send_message(user_id, "📸 Now send your photo:", reply_markup=markup)
+async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    data = {
+        'user_id': user.id,
+        'name': context.user_data['name'],
+        'age': context.user_data['age'],
+        'gender': context.user_data['gender'],
+        'photo': context.user_data['photo'],
+        'place': context.user_data.get('place', ''),
+        'bio': context.user_data.get('bio', ''),
+        'joined': str(datetime.now())
+    }
+    save_user(data)
+    await update.message.reply_text("✅ Profile saved! Use /find to browse.")
+    return ConversationHandler.END
 
-# Handle photo uploads during profile creation
-@bot.message_handler(content_types=['photo'])
-def handle_photo_upload(message):
-    user_id = message.from_user.id
-    if user_id in users and users[user_id].get('step') == 'photo':
-        users[user_id]['photo'] = message.photo[-1].file_id
-        profiles[user_id] = users[user_id]
-        users.pop(user_id)
-        bot.send_message(user_id, "✅ Profile created successfully!")
-    elif user_id in active_chats:
-        partner = active_chats[user_id]
-        bot.send_photo(partner, message.photo[-1].file_id)
+# Chat Commands
+async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("💞 Chat with Match", callback_data="match_chat")],
+        [InlineKeyboardButton("🔀 Random Chat", callback_data="random_chat")]
+    ]
+    await update.message.reply_text("Choose a chat mode:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Show profile
-@bot.message_handler(commands=['profile'])
-def show_profile(message):
-    user_id = message.from_user.id
-    profile = profiles.get(user_id)
-    if profile:
-        caption = f"👤 Name: {profile['name']}\n📅 Age: {profile['age']}\n🚻 Gender: {profile['gender']}\n📍 Place: {profile['place']}\n📝 Bio: {profile['bio']}"
-        bot.send_photo(user_id, profile['photo'], caption=caption)
-    else:
-        bot.send_message(user_id, "⚠️ You don't have a profile yet. Use /start to create one.")
+async def chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
 
-# Edit profile
-@bot.message_handler(commands=['edit'])
-def edit_profile(message):
-    user_id = message.from_user.id
-    users[user_id] = {'step': 'name'}
-    bot.send_message(user_id, "🛠 Let's update your profile.\nWhat's your name?")
+    if query.data == "match_chat":
+        mutuals = get_mutual_likes(user_id)
+        random.shuffle(mutuals)
+        for match in mutuals:
+            if match not in chat_pairs.values():
+                chat_pairs[user_id] = match
+                chat_pairs[match] = user_id
+                await context.bot.send_message(match, "💞 You're now in match chat!")
+                await query.message.reply_text("✅ Connected to a mutual like. Start chatting!")
+                return MATCH_CHAT
+        await query.message.reply_text("No available mutual likes at the moment.")
 
-# Find match
-@bot.message_handler(commands=['find'])
-def find_match(message):
-    user_id = message.from_user.id
-    if user_id not in profiles:
-        bot.send_message(user_id, "⚠️ Please complete your profile with /start first.")
-        return
-
-    for uid, profile in profiles.items():
-        if uid != user_id and uid not in likes.get(user_id, []):
-            caption = f"👤 Name: {profile['name']}\n📅 Age: {profile['age']}\n🚻 Gender: {profile['gender']}\n📍 Place: {profile['place']}\n📝 Bio: {profile['bio']}"
-            markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton("❤️ Like", callback_data=f"like_{uid}"),
-                types.InlineKeyboardButton("❌ Skip", callback_data=f"dislike_{uid}")
-            )
-            bot.send_photo(user_id, profile['photo'], caption=caption, reply_markup=markup)
-            return
-
-    bot.send_message(user_id, "🔍 No more profiles to show right now. Try again later.")
-
-# Handle like/dislike
-@bot.callback_query_handler(func=lambda call: call.data.startswith("like_") or call.data.startswith("dislike_"))
-def handle_like_dislike(call):
-    user_id = call.from_user.id
-    target_id = int(call.data.split('_')[1])
-
-    if call.data.startswith("like_"):
-        likes.setdefault(user_id, []).append(target_id)
-
-        if user_id in likes.get(target_id, []):
-            bot.send_message(user_id, "🎉 It's a match! Use /chat to start talking.")
-            bot.send_message(target_id, "🎉 It's a match! Use /chat to start talking.")
-            active_chats[user_id] = target_id
-            active_chats[target_id] = user_id
+    elif query.data == "random_chat":
+        if random_waiting and random_waiting[0] != user_id:
+            partner = random_waiting.pop(0)
+            chat_pairs[user_id] = partner
+            chat_pairs[partner] = user_id
+            await context.bot.send_message(partner, "🔀 You've been paired in random chat!")
+            await query.message.reply_text("✅ Connected to random user. Start chatting!")
         else:
-            bot.send_message(user_id, "👍 Liked!")
+            random_waiting.append(user_id)
+            await query.message.reply_text("⌛ Waiting for a partner...")
 
-    elif call.data.startswith("dislike_"):
-        dislikes.setdefault(user_id, []).append(target_id)
-        bot.send_message(user_id, "👎 Skipped.")
-
-    # ✅ Show next profile automatically
-    find_match(call.message)
-
-# Start chat
-@bot.message_handler(commands=['chat'])
-def start_chat(message):
-    user_id = message.from_user.id
-    if user_id in active_chats:
-        bot.send_message(user_id, "💬 Send messages now. Use /stop to end chat.")
+# Stop Chat
+async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in chat_pairs:
+        partner = chat_pairs.pop(user_id)
+        chat_pairs.pop(partner, None)
+        await context.bot.send_message(partner, "⚠️ Chat ended by your partner.")
+        await update.message.reply_text("✅ You left the chat.")
     else:
-        bot.send_message(user_id, "❗ You are not matched with anyone yet.")
+        await update.message.reply_text("❌ You're not in any chat.")
 
-# Stop chat
-@bot.message_handler(commands=['stop'])
-def stop_chat(message):
-    user_id = message.from_user.id
-    partner = active_chats.get(user_id)
-    if partner:
-        bot.send_message(partner, "🔕 Chat ended by the other user.")
-        active_chats.pop(partner, None)
-        active_chats.pop(user_id, None)
-    bot.send_message(user_id, "❌ Chat ended.")
+# Relay Messages
+async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in chat_pairs:
+        partner_id = chat_pairs[user_id]
+        if update.message.text:
+            await context.bot.send_message(partner_id, update.message.text)
+        elif update.message.photo:
+            await context.bot.send_photo(partner_id, update.message.photo[-1].file_id)
 
-# Forward messages between matched users
-@bot.message_handler(func=lambda msg: msg.from_user.id in active_chats)
-def forward_chat(msg):
-    partner = active_chats.get(msg.from_user.id)
-    if partner:
-        if msg.content_type == 'text':
-            bot.send_message(partner, f"🗣 {msg.text}")
-        elif msg.content_type == 'photo':
-            bot.send_photo(partner, msg.photo[-1].file_id)
-        else:
-            bot.send_message(msg.chat.id, "❌ Only text or photo allowed.")
+# Entry Point
+if __name__ == '__main__':
+    from telegram.ext import ApplicationBuilder
 
-# Admin panel
-@bot.message_handler(commands=['admin'])
-def admin_panel(message):
-    if message.from_user.id in admin_ids:
-        total_users = len(profiles)
-        bot.send_message(message.chat.id, f"👥 Total users: {total_users}")
-    else:
-        bot.send_message(message.chat.id, "🚫 You are not authorized.")
+    app = ApplicationBuilder().token("BOT_TOKEN").build()
 
-# Broadcast
-@bot.message_handler(commands=['broadcast'])
-def broadcast(message):
-    if message.from_user.id not in admin_ids:
-        return
-    parts = message.text.split(' ', 1)
-    if len(parts) == 2:
-        for uid in profiles:
-            try:
-                bot.send_message(uid, f"📢 Admin Message:\n{parts[1]}")
-            except:
-                continue
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(skip_channel, pattern="skip_channel"))
+    app.add_handler(CommandHandler("chat", chat_command))
+    app.add_handler(CallbackQueryHandler(chat_callback, pattern="^(match_chat|random_chat)$"))
+    app.add_handler(CommandHandler("stop", stop_chat))
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, relay))
 
-# Help command
-@bot.message_handler(commands=['help'])
-def show_help(message):
-    help_text = (
-        "🤖 *MateFinder Bot Commands:*\n\n"
-        "/start - Start interaction or create a new profile\n"
-        "/profile - View your current profile\n"
-        "/edit - Edit your profile\n"
-        "/find - Browse potential matches\n"
-        "/chat - Start chatting with a matched person\n"
-        "/stop - Stop current chat\n"
-        "/help - Show all commands\n"
-        "/admin - Admin panel\n"
-        "/cancel - Cancel any current operation (profile/chat)\n"
-        "/broadcast <message> - Send message to all users (admin only)"
+    # Profile Conversation
+    profile_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(skip_channel, pattern="skip_channel")],
+        states={
+            PROFILE_NAME: [MessageHandler(filters.TEXT, profile_name)],
+            PROFILE_AGE: [MessageHandler(filters.TEXT, profile_age)],
+            PROFILE_GENDER: [MessageHandler(filters.TEXT, profile_gender)],
+            PROFILE_PHOTO: [MessageHandler(filters.PHOTO, profile_photo)],
+            PROFILE_PLACE: [MessageHandler(filters.TEXT, profile_place), CommandHandler("skip", skip_optional)],
+            PROFILE_BIO: [MessageHandler(filters.TEXT, profile_bio), CommandHandler("skip", skip_optional)]
+        },
+        fallbacks=[CommandHandler("cancel", skip_optional)]
     )
-    bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
-# Cancel command
-@bot.message_handler(commands=['cancel'])
-def cancel_all(message):
-    user_id = message.from_user.id
+    app.add_handler(profile_conv)
 
-    # Cancel profile creation
-    if user_id in users:
-        users.pop(user_id)
-    
-    # Cancel active chat
-    if user_id in active_chats:
-        partner_id = active_chats.pop(user_id)
-        if partner_id in active_chats:
-            active_chats.pop(partner_id)
-            bot.send_message(partner_id, "⚠️ The other user has cancelled the chat.")
-
-    # Confirm to user
-    bot.send_message(user_id, "❌ All operations cancelled.\nUse /start to begin again.")
-# Start polling
-bot.infinity_polling()
+    app.run_polling()

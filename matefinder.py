@@ -3,7 +3,7 @@ from telebot import types
 from tinydb import TinyDB, Query
 
 # --- Config ---
-BOT_TOKEN = 'BOT_TOKEN'  # Replace when deploying
+BOT_TOKEN = '7620053279:AAGETQR-9A_KUhAcldUqz41EckEvBRfgpSE'  # Replace when deploying
 bot = telebot.TeleBot(BOT_TOKEN)
 db = TinyDB("users.json")
 User = Query()

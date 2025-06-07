@@ -1,234 +1,133 @@
-import logging
-import random
-import os
-from datetime import datetime
-from tinydb import TinyDB, Query
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, InputMediaPhoto
+import logging import random from telegram import ( Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, InputMediaPhoto ) from telegram.ext import ( Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, filters )
+
+Enable logging
+
+logging.basicConfig( format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO ) logger = logging.getLogger(name)
+
+Bot Token
+
+TOKEN = "BOT_TOKEN" CHANNEL_USERNAME = "@MateFinderUpdates"
+
+States
+
+NAME, AGE, GENDER, PHOTO, PLACE, BIO = range(6)
+
+In-memory user data
+
+users = {} likes = {} skips = {} matched_pairs = set() random_chat_queue = [] active_chats = {} banned_users = set() muted_users = set()
+
+--- Utility Functions ---
+
+def get_user(user_id): return users.get(user_id)
+
+def get_other_profiles(viewer_id): return [u for uid, u in users.items() if uid != viewer_id]
+
+def end_chat(user_id): partner_id = active_chats.pop(user_id, None) if partner_id: active_chats.pop(partner_id, None) return partner_id return None
+
+--- Command Handlers ---
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.effective_user.id if user_id in banned_users: await update.message.reply_text("🚫 You are banned from using this bot.") return
+
+keyboard = [
+    [InlineKeyboardButton("🔗 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")],
+    [InlineKeyboardButton("✅ Skip", callback_data="skip_channel")]
+]
+await update.message.reply_text(
+    "👋 Welcome to MateFinder! Please join our update channel before continuing:",
+    reply_markup=InlineKeyboardMarkup(keyboard)
 )
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters, ConversationHandler, ApplicationBuilder
-)
 
-# Initialize
-logging.basicConfig(level=logging.INFO)
-db = TinyDB("matefinder_db.json")
-users_table = db.table("users")
-likes_table = db.table("likes")
-skips_table = db.table("skips")
-waiting_table = db.table("waiting")
-muted_table = db.table("muted")
-banned_table = db.table("banned")
-chat_pairs = {}
-random_waiting = []
+async def skip_channel(update: Update, context: ContextTypes.DEFAULT_TYPE): await update.callback_query.answer() await update.callback_query.message.reply_text("Welcome to MateFinder! How are you?") await update.callback_query.message.reply_text("Let’s create your profile. What’s your name?") return NAME
 
-# States
-PROFILE_NAME, PROFILE_AGE, PROFILE_GENDER, PROFILE_PHOTO, PROFILE_PLACE, PROFILE_BIO = range(6)
-FINDING, COMMENTING, MATCH_CHAT, RANDOM_CHAT = range(6, 10)
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE): await update.message.reply_text("❌ Action cancelled.", reply_markup=ReplyKeyboardRemove()) return ConversationHandler.END
 
-# Utils
-def get_user(user_id):
-    return users_table.get(Query().user_id == user_id)
+--- Profile Creation ---
 
-def save_user(data):
-    users_table.upsert(data, Query().user_id == data['user_id'])
+async def name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): context.user_data['name'] = update.message.text await update.message.reply_text("How old are you?") return AGE
 
-def add_like(liker, liked):
-    likes_table.insert({'from': liker, 'to': liked})
+async def age_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): context.user_data['age'] = update.message.text await update.message.reply_text("Your gender (Male/Female/Other)?") return GENDER
 
-def add_skip(skipper, skipped):
-    skips_table.insert({'from': skipper, 'to': skipped})
+async def gender_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): context.user_data['gender'] = update.message.text await update.message.reply_text("Please send your profile photo.") return PHOTO
 
-def get_mutual_likes(user_id):
-    sent = likes_table.search(Query().from_ == user_id)
-    received = likes_table.search(Query().to == user_id)
-    sent_ids = {x['to'] for x in sent}
-    received_ids = {x['from'] for x in received}
-    return list(sent_ids & received_ids)
+async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): photo_file_id = update.message.photo[-1].file_id context.user_data['photo'] = photo_file_id await update.message.reply_text("Where are you from? (Optional, type /skip to skip)") return PLACE
 
-def is_banned(user_id):
-    return banned_table.contains(Query().user_id == user_id)
+async def place_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): context.user_data['place'] = update.message.text await update.message.reply_text("Write a short bio about yourself. (Optional, type /skip to skip)") return BIO
 
-# Command: /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_banned(user_id):
-        await update.message.reply_text("⛔ You are banned from using this bot.")
-        return
-    keyboard = [
-        [InlineKeyboardButton("Join Channel", url="https://t.me/MateFinderUpdatesl")],
-        [InlineKeyboardButton("Skip", callback_data="skip_channel")]
-    ]
-    await update.message.reply_text(
-        "Welcome to MateFinder! Join our channel or skip.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+async def skip_place(update: Update, context: ContextTypes.DEFAULT_TYPE): context.user_data['place'] = "" await update.message.reply_text("Write a short bio about yourself. (Optional, type /skip to skip)") return BIO
 
-async def skip_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if hasattr(update, 'callback_query'):
-        await update.callback_query.answer()
-        await update.callback_query.message.reply_text("👋 Welcome to MateFinder! Let's create your profile. What's your name?")
-    else:
-        await update.message.reply_text("👋 Welcome to MateFinder! Let's create your profile. What's your name?")
-    return PROFILE_NAME
+async def bio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): context.user_data['bio'] = update.message.text return await save_profile(update, context)
 
-# Profile Creation Handlers
-async def profile_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['name'] = update.message.text
-    await update.message.reply_text("Your age?")
-    return PROFILE_AGE
+async def skip_bio(update: Update, context: ContextTypes.DEFAULT_TYPE): context.user_data['bio'] = "" return await save_profile(update, context)
 
-async def profile_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['age'] = update.message.text
-    await update.message.reply_text("Your gender? (Male/Female/Other)")
-    return PROFILE_GENDER
+async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.effective_user.id users[user_id] = { 'id': user_id, 'name': context.user_data['name'], 'age': context.user_data['age'], 'gender': context.user_data['gender'], 'photo': context.user_data['photo'], 'place': context.user_data.get('place', ''), 'bio': context.user_data.get('bio', '') } likes[user_id] = set() skips[user_id] = set() await update.message.reply_text("✅ Profile created successfully! Use /find to start browsing.") return ConversationHandler.END
 
-async def profile_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['gender'] = update.message.text
-    await update.message.reply_text("Send your profile photo.")
-    return PROFILE_PHOTO
+--- Chat System ---
 
-async def profile_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.photo:
-        await update.message.reply_text("Please send a photo.")
-        return PROFILE_PHOTO
-    context.user_data['photo'] = update.message.photo[-1].file_id
-    await update.message.reply_text("Optional: Your place (or type /skip)")
-    return PROFILE_PLACE
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE): keyboard = [ [InlineKeyboardButton("💞 Match Chat", callback_data="match_chat")], [InlineKeyboardButton("🔀 Random Chat", callback_data="random_chat")] ] await update.message.reply_text("Choose a chat mode:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def profile_place(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['place'] = update.message.text
-    await update.message.reply_text("Optional: Your bio (or type /skip)")
-    return PROFILE_BIO
+async def match_chat(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.callback_query.from_user.id partner_id = None for other_id, other_likes in likes.items(): if user_id in other_likes and other_id in likes[user_id] and other_id not in active_chats: partner_id = other_id break
 
-async def skip_optional(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await save_profile(update, context)
+if partner_id:
+    active_chats[user_id] = partner_id
+    active_chats[partner_id] = user_id
+    await context.bot.send_message(partner_id, "💞 You’ve matched! Start chatting.")
+    await update.callback_query.message.reply_text("💞 You’ve matched! Start chatting.")
+else:
+    await update.callback_query.message.reply_text("❗ No matches found yet. Like more profiles with /find.")
 
-async def profile_bio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['bio'] = update.message.text
-    return await save_profile(update, context)
+async def random_chat(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.callback_query.from_user.id if user_id in random_chat_queue: await update.callback_query.message.reply_text("⏳ You are already in the queue. Please wait.") return
 
-async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    data = {
-        'user_id': user.id,
-        'name': context.user_data.get('name', ''),
-        'age': context.user_data.get('age', ''),
-        'gender': context.user_data.get('gender', ''),
-        'photo': context.user_data.get('photo', ''),
-        'place': context.user_data.get('place', ''),
-        'bio': context.user_data.get('bio', ''),
-        'joined': str(datetime.now())
-    }
-    save_user(data)
-    await update.message.reply_text("✅ Profile saved! Use /find to browse.")
-    return ConversationHandler.END
-
-# Chat Commands
-async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("💞 Chat with Match", callback_data="match_chat")],
-        [InlineKeyboardButton("🔀 Random Chat", callback_data="random_chat")]
-    ]
-    await update.message.reply_text("Choose a chat mode:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    await query.answer()
-
-    # Prevent users from being in two chats at once
-    if user_id in chat_pairs:
-        await query.message.reply_text("❌ You are already in a chat. Use /stop to end it before joining another.")
+for uid in random_chat_queue:
+    if uid != user_id:
+        partner_id = uid
+        random_chat_queue.remove(uid)
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
+        await context.bot.send_message(partner_id, "🔀 Partner found! Start chatting.")
+        await update.callback_query.message.reply_text("🔀 Partner found! Start chatting.")
         return
 
-    if query.data == "match_chat":
-        mutuals = get_mutual_likes(user_id)
-        random.shuffle(mutuals)
-        for match in mutuals:
-            if match not in chat_pairs.values() and match not in chat_pairs.keys():
-                chat_pairs[user_id] = match
-                chat_pairs[match] = user_id
-                await context.bot.send_message(match, "💞 You're now in match chat!")
-                await query.message.reply_text("✅ Connected to a mutual like. Start chatting!")
-                return MATCH_CHAT
-        await query.message.reply_text("No available mutual likes at the moment.")
+random_chat_queue.append(user_id)
+await update.callback_query.message.reply_text("⏳ Waiting for a random partner...")
 
-    elif query.data == "random_chat":
-        # Prevent duplicate waiting
-        if user_id in random_waiting:
-            await query.message.reply_text("⌛ You are already waiting for a partner...")
-            return
-        if random_waiting and random_waiting[0] != user_id:
-            partner = random_waiting.pop(0)
-            chat_pairs[user_id] = partner
-            chat_pairs[partner] = user_id
-            await context.bot.send_message(partner, "🔀 You've been paired in random chat!")
-            await query.message.reply_text("✅ Connected to random user. Start chatting!")
-        else:
-            random_waiting.append(user_id)
-            await query.message.reply_text("⌛ Waiting for a partner...")
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.effective_user.id partner_id = active_chats.get(user_id) if partner_id: if update.message.text: await context.bot.send_message(partner_id, f"💬 {update.message.text}") elif update.message.photo: await context.bot.send_photo(partner_id, photo=update.message.photo[-1].file_id)
 
-# Stop Chat
-async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in chat_pairs:
-        partner = chat_pairs.pop(user_id)
-        chat_pairs.pop(partner, None)
-        await context.bot.send_message(partner, "⚠️ Chat ended by your partner.")
-        await update.message.reply_text("✅ You left the chat.")
-    else:
-        await update.message.reply_text("❌ You're not in any chat.")
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.effective_user.id partner_id = end_chat(user_id) if partner_id: await context.bot.send_message(partner_id, "❌ Your chat has ended.") await update.message.reply_text("❌ You ended the chat.") else: await update.message.reply_text("⚠️ You are not in a chat.")
 
-# Relay Messages
-async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in chat_pairs:
-        partner_id = chat_pairs[user_id]
-        if update.message.text:
-            await context.bot.send_message(partner_id, update.message.text)
-        elif update.message.photo:
-            await context.bot.send_photo(partner_id, update.message.photo[-1].file_id)
-        else:
-            await update.message.reply_text("Only text and photo messages are supported for relay.")
-    # Optionally, you can add an else to notify users if they're not in a chat.
+--- Main ---
 
-if __name__ == '__main__':
-    TOKEN = os.getenv("BOT_TOKEN")
-    if not TOKEN:
-        raise ValueError("BOT_TOKEN environment variable not set")
-    app = ApplicationBuilder().token(TOKEN).build()
+def main(): app = Application.builder().token(TOKEN).build()
 
-    # Basic commands
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(skip_channel, pattern="skip_channel"))
-    app.add_handler(CommandHandler("chat", chat_command))
-    app.add_handler(CallbackQueryHandler(chat_callback, pattern="^(match_chat|random_chat)$"))
-    app.add_handler(CommandHandler("stop", stop_chat))
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, relay))
-
-    # Profile Conversation
-    profile_conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(skip_channel, pattern="skip_channel")
+profile_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(skip_channel, pattern="^skip_channel$")],
+    states={
+        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name_handler)],
+        AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, age_handler)],
+        GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, gender_handler)],
+        PHOTO: [MessageHandler(filters.PHOTO, photo_handler)],
+        PLACE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, place_handler),
+            CommandHandler("skip", skip_place)
         ],
-        states={
-            PROFILE_NAME: [MessageHandler(filters.TEXT, profile_name)],
-            PROFILE_AGE: [MessageHandler(filters.TEXT, profile_age)],
-            PROFILE_GENDER: [MessageHandler(filters.TEXT, profile_gender)],
-            PROFILE_PHOTO: [MessageHandler(filters.PHOTO, profile_photo)],
-            PROFILE_PLACE: [
-                MessageHandler(filters.TEXT, profile_place),
-                CommandHandler("skip", skip_optional)
-            ],
-            PROFILE_BIO: [
-                MessageHandler(filters.TEXT, profile_bio),
-                CommandHandler("skip", skip_optional)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", skip_optional)]
-    )
-    app.add_handler(profile_conv)
+        BIO: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, bio_handler),
+            CommandHandler("skip", skip_bio)
+        ]
+    },
+    fallbacks=[CommandHandler("cancel", cancel)]
+)
 
-    app.run_polling()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(profile_conv)
+app.add_handler(CommandHandler("cancel", cancel))
+app.add_handler(CommandHandler("chat", chat))
+app.add_handler(CommandHandler("stop", stop))
+app.add_handler(CallbackQueryHandler(match_chat, pattern="^match_chat$"))
+app.add_handler(CallbackQueryHandler(random_chat, pattern="^random_chat$"))
+app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, message_handler))
+
+app.run_polling()
+
+if name == 'main': main()
+
+

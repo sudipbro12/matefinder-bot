@@ -1,5 +1,6 @@
 import logging
 import random
+import os
 from datetime import datetime
 from tinydb import TinyDB, Query
 from telegram import (
@@ -7,7 +8,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters, ConversationHandler
+    ContextTypes, filters, ConversationHandler, ApplicationBuilder
 )
 
 # Initialize
@@ -59,12 +60,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Join Channel", url="https://t.me/MateFinderUpdatesl")],
         [InlineKeyboardButton("Skip", callback_data="skip_channel")]
     ]
-    await update.message.reply_text("Welcome to MateFinder! Join our channel or skip.",
-                                    reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "Welcome to MateFinder! Join our channel or skip.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def skip_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("👋 Welcome to MateFinder! Let's create your profile. What's your name?")
+    if hasattr(update, 'callback_query'):
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text("👋 Welcome to MateFinder! Let's create your profile. What's your name?")
+    else:
+        await update.message.reply_text("👋 Welcome to MateFinder! Let's create your profile. What's your name?")
     return PROFILE_NAME
 
 # Profile Creation Handlers
@@ -84,6 +90,9 @@ async def profile_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PROFILE_PHOTO
 
 async def profile_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("Please send a photo.")
+        return PROFILE_PHOTO
     context.user_data['photo'] = update.message.photo[-1].file_id
     await update.message.reply_text("Optional: Your place (or type /skip)")
     return PROFILE_PLACE
@@ -104,10 +113,10 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     data = {
         'user_id': user.id,
-        'name': context.user_data['name'],
-        'age': context.user_data['age'],
-        'gender': context.user_data['gender'],
-        'photo': context.user_data['photo'],
+        'name': context.user_data.get('name', ''),
+        'age': context.user_data.get('age', ''),
+        'gender': context.user_data.get('gender', ''),
+        'photo': context.user_data.get('photo', ''),
         'place': context.user_data.get('place', ''),
         'bio': context.user_data.get('bio', ''),
         'joined': str(datetime.now())
@@ -129,11 +138,16 @@ async def chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
 
+    # Prevent users from being in two chats at once
+    if user_id in chat_pairs:
+        await query.message.reply_text("❌ You are already in a chat. Use /stop to end it before joining another.")
+        return
+
     if query.data == "match_chat":
         mutuals = get_mutual_likes(user_id)
         random.shuffle(mutuals)
         for match in mutuals:
-            if match not in chat_pairs.values():
+            if match not in chat_pairs.values() and match not in chat_pairs.keys():
                 chat_pairs[user_id] = match
                 chat_pairs[match] = user_id
                 await context.bot.send_message(match, "💞 You're now in match chat!")
@@ -142,6 +156,10 @@ async def chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("No available mutual likes at the moment.")
 
     elif query.data == "random_chat":
+        # Prevent duplicate waiting
+        if user_id in random_waiting:
+            await query.message.reply_text("⌛ You are already waiting for a partner...")
+            return
         if random_waiting and random_waiting[0] != user_id:
             partner = random_waiting.pop(0)
             chat_pairs[user_id] = partner
@@ -172,13 +190,17 @@ async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(partner_id, update.message.text)
         elif update.message.photo:
             await context.bot.send_photo(partner_id, update.message.photo[-1].file_id)
+        else:
+            await update.message.reply_text("Only text and photo messages are supported for relay.")
+    # Optionally, you can add an else to notify users if they're not in a chat.
 
-# Entry Point
 if __name__ == '__main__':
-    from telegram.ext import ApplicationBuilder
+    TOKEN = os.getenv("BOT_TOKEN")
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN environment variable not set")
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    app = ApplicationBuilder().token("BOT_TOKEN").build()
-
+    # Basic commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(skip_channel, pattern="skip_channel"))
     app.add_handler(CommandHandler("chat", chat_command))
@@ -188,14 +210,22 @@ if __name__ == '__main__':
 
     # Profile Conversation
     profile_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(skip_channel, pattern="skip_channel")],
+        entry_points=[
+            CallbackQueryHandler(skip_channel, pattern="skip_channel")
+        ],
         states={
             PROFILE_NAME: [MessageHandler(filters.TEXT, profile_name)],
             PROFILE_AGE: [MessageHandler(filters.TEXT, profile_age)],
             PROFILE_GENDER: [MessageHandler(filters.TEXT, profile_gender)],
             PROFILE_PHOTO: [MessageHandler(filters.PHOTO, profile_photo)],
-            PROFILE_PLACE: [MessageHandler(filters.TEXT, profile_place), CommandHandler("skip", skip_optional)],
-            PROFILE_BIO: [MessageHandler(filters.TEXT, profile_bio), CommandHandler("skip", skip_optional)]
+            PROFILE_PLACE: [
+                MessageHandler(filters.TEXT, profile_place),
+                CommandHandler("skip", skip_optional)
+            ],
+            PROFILE_BIO: [
+                MessageHandler(filters.TEXT, profile_bio),
+                CommandHandler("skip", skip_optional)
+            ]
         },
         fallbacks=[CommandHandler("cancel", skip_optional)]
     )

@@ -3,7 +3,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedia
 import random
 
 # Your bot token here
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "7620053279:AAGETQR-9A_KUhAcldUqz41EckEvBRfgpSE"
 bot = telebot.TeleBot(TOKEN)
 
 users = {}  # user_id: profile dict
@@ -11,7 +11,7 @@ likes = {}  # user_id: set of liked user_ids
 skips = {}  # user_id: set of skipped user_ids
 active_chats = {}  # user_id: partner_id
 random_queue = []
-admins = [123456789]  # replace with your Telegram user ID
+admins = [6535216093]  # replace with your Telegram user ID
 
 # --- States ---
 user_states = {}

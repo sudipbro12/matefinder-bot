@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Bot Token
+# Bot Token (Replace with your real token before running)
 TOKEN = "BOT_TOKEN"
 CHANNEL_USERNAME = "@MateFinderUpdates"
 
@@ -74,27 +74,39 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Profile creation
 async def name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text:
+        await update.message.reply_text("Please send your name as text.")
+        return NAME
     context.user_data['name'] = update.message.text
     await update.message.reply_text("How old are you?")
     return AGE
 
 async def age_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['age'] = update.message.text
+    if not update.message.text or not update.message.text.isdigit():
+        await update.message.reply_text("Please enter your age as a number.")
+        return AGE
+    context.user_data['age'] = int(update.message.text)
     await update.message.reply_text("Your gender (Male/Female/Other)?")
     return GENDER
 
 async def gender_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text:
+        await update.message.reply_text("Please enter your gender (Male/Female/Other).")
+        return GENDER
     context.user_data['gender'] = update.message.text
     await update.message.reply_text("Please send your profile photo.")
     return PHOTO
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("Please send a photo to continue.")
+        return PHOTO
     context.user_data['photo'] = update.message.photo[-1].file_id
     await update.message.reply_text("Where are you from? (Optional, type /skip to skip)")
     return PLACE
 
 async def place_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['place'] = update.message.text
+    context.user_data['place'] = update.message.text if update.message.text else ""
     await update.message.reply_text("Write a short bio about yourself. (Optional, type /skip to skip)")
     return BIO
 
@@ -104,7 +116,7 @@ async def skip_place(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BIO
 
 async def bio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['bio'] = update.message.text
+    context.user_data['bio'] = update.message.text if update.message.text else ""
     return await save_profile(update, context)
 
 async def skip_bio(update: Update, context: ContextTypes.DEFAULT_TYPE):
